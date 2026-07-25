@@ -1,0 +1,7 @@
+django>=5.0
+djangorestframework
+django-cors-headers
+PyJWT
+bcrypt
+openpyxl
+requests
