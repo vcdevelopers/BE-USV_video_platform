@@ -6,7 +6,10 @@ from django.conf import settings
 from django.http import JsonResponse, HttpResponse
 from django.db.models import Count, Q
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.decorators import api_view
+from django.core.exceptions import ValidationError
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
@@ -41,6 +44,7 @@ def check_admin_password(password, stored_hash):
 
 @csrf_exempt
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def get_languages(request):
     try:
         languages = list(Language.objects.filter(is_active=True).order_by('sort_order').values('code', 'name'))
@@ -51,6 +55,7 @@ def get_languages(request):
 
 @csrf_exempt
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def get_site_settings(request):
     try:
         settings_dict = {}
@@ -66,6 +71,7 @@ def get_site_settings(request):
 
 @csrf_exempt
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def get_videos(request):
     try:
         target_lang = request.GET.get('lang', 'en').lower()
@@ -118,6 +124,7 @@ def get_videos(request):
 
 @csrf_exempt
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def play_video(request, video_id):
     try:
         admin_payload = verify_admin_token(request)
@@ -160,6 +167,7 @@ def play_video(request, video_id):
 
 @csrf_exempt
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def log_view_event(request):
     try:
         data = request.data or {}
@@ -221,6 +229,7 @@ def log_view_event(request):
 
 @csrf_exempt
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def admin_login(request):
     try:
         data = request.data or {}
@@ -292,6 +301,7 @@ def update_site_settings(request):
 
 @csrf_exempt
 @api_view(['GET', 'POST'])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def admin_videos(request):
     admin_payload = verify_admin_token(request)
     if not admin_payload:
@@ -337,7 +347,7 @@ def admin_videos(request):
 
     elif request.method == 'POST':
         try:
-            data = request.POST
+            data = request.data
             files = request.FILES
 
             slot_id = data.get('slot_id')
@@ -429,122 +439,20 @@ def admin_videos(request):
                 )
                 return JsonResponse({'success': True, 'video_id': new_vid.id, 'slot_id': target_slot_id, 'language_code': lang_code, 'action': 'created'})
 
+        except ValidationError as e:
+            msg = e.message if hasattr(e, 'message') else (e.messages[0] if hasattr(e, 'messages') and e.messages else str(e))
+            return JsonResponse({'error': msg}, status=400)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
 
 
-@csrf_exempt
-@api_view(['POST'])
-def admin_create_or_update_video(request):
-    admin_payload = verify_admin_token(request)
-    if not admin_payload:
-        return JsonResponse({'error': 'Unauthorized. Valid admin token required.'}, status=401)
 
-    try:
-        data = request.POST
-        files = request.FILES
-
-        slot_id = data.get('slot_id')
-        category_id = data.get('category_id')
-        new_cat_title = data.get('new_category_title')
-        new_cat_desc = data.get('new_category_description', '')
-        new_slot_title = data.get('new_slot_title') or data.get('slot_title')
-        new_slot_desc = data.get('new_slot_description') or data.get('slot_description', '')
-        lang_code_input = data.get('language_code')
-        lang_name_input = data.get('language_name')
-        target_area = data.get('target_area', '')
-        is_active_input = data.get('is_active')
-        video_url_custom = data.get('video_url_custom', '')
-        thumb_url_custom = data.get('thumbnail_url_custom', '')
-
-        active_flag = False if is_active_input in ('false', 0, '0') else True
-
-        # Handle category creation if new
-        target_cat_id = int(category_id) if category_id and category_id != 'new' else None
-        if (not target_cat_id or category_id == 'new') and new_cat_title:
-            cat_slug = new_cat_title.lower().replace(' ', '-').replace('/', '-') + '-' + str(int(time.time()))
-            new_cat = Category.objects.create(
-                slug=cat_slug,
-                title=new_cat_title,
-                description=new_cat_desc,
-                sort_order=99
-            )
-            target_cat_id = new_cat.id
-
-        # Language registration
-        if lang_code_input and lang_name_input:
-            Language.objects.get_or_create(
-                code=lang_code_input.lower(),
-                defaults={'name': lang_name_input, 'is_active': True, 'sort_order': 99}
-            )
-        lang_code = lang_code_input.lower() if lang_code_input else 'en'
-
-        # Handle slot creation if new
-        target_slot_id = int(slot_id) if slot_id and slot_id != 'new' else None
-        if not target_slot_id or slot_id == 'new':
-            if not target_cat_id:
-                return JsonResponse({'error': 'Please select an existing category or create a custom category.'}, status=400)
-            if not new_slot_title:
-                return JsonResponse({'error': 'Please enter a title for the new video slot.'}, status=400)
-
-            slot_slug = new_slot_title.lower().replace(' ', '-').replace('/', '-') + '-' + str(int(time.time()))
-            cat_obj = Category.objects.get(id=target_cat_id)
-            new_slot = VideoSlot.objects.create(
-                category=cat_obj,
-                slug=slot_slug,
-                title=new_slot_title,
-                description=new_slot_desc,
-                is_intro=False,
-                sort_order=99
-            )
-            target_slot_id = new_slot.id
-
-        # File processing & server-side validation
-        final_video_url = video_url_custom
-        if 'video_file' in files:
-            final_video_url = save_uploaded_file(files['video_file'], 'video')
-
-        final_thumb_url = thumb_url_custom
-        if 'thumbnail_file' in files:
-            final_thumb_url = save_uploaded_file(files['thumbnail_file'], 'thumbnail')
-
-        if not final_video_url and 'video_file' not in files:
-            # If updating existing, check if video_url already exists
-            existing_vid = Video.objects.filter(slot_id=target_slot_id, language_code=lang_code).first()
-            if not existing_vid or not existing_vid.video_url:
-                return JsonResponse({'error': 'Please upload a video file or provide a valid video URL.'}, status=400)
-
-        # UPDATE-IN-PLACE UNICITY RULE: (slot_id, language_code)
-        existing = Video.objects.filter(slot_id=target_slot_id, language_code=lang_code).first()
-
-        if existing:
-            if final_video_url:
-                existing.video_url = final_video_url
-            if final_thumb_url or 'thumbnail_file' in files:
-                existing.thumbnail_url = final_thumb_url
-            existing.target_area = target_area
-            existing.is_active = active_flag
-            existing.save()
-            return JsonResponse({'success': True, 'video_id': existing.id, 'slot_id': target_slot_id, 'language_code': lang_code, 'action': 'updated'})
-        else:
-            slot_obj = VideoSlot.objects.get(id=target_slot_id)
-            new_vid = Video.objects.create(
-                slot=slot_obj,
-                language_code=lang_code,
-                video_url=final_video_url,
-                thumbnail_url=final_thumb_url,
-                target_area=target_area,
-                is_active=active_flag
-            )
-            return JsonResponse({'success': True, 'video_id': new_vid.id, 'slot_id': target_slot_id, 'language_code': lang_code, 'action': 'created'})
-
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
 
 
 @csrf_exempt
 @api_view(['PUT', 'DELETE'])
+@parser_classes([MultiPartParser, FormParser])
 def admin_edit_video(request, video_id):
     admin_payload = verify_admin_token(request)
     if not admin_payload:
@@ -567,7 +475,7 @@ def admin_edit_video(request, video_id):
         except Video.DoesNotExist:
             return JsonResponse({'error': 'Video entry not found'}, status=404)
 
-        data = request.POST
+        data = request.data
         files = request.FILES
 
         slot_title = data.get('slot_title')
@@ -602,6 +510,9 @@ def admin_edit_video(request, video_id):
         video.save()
 
         return JsonResponse({'success': True, 'video_id': video.id})
+    except ValidationError as e:
+        msg = e.message if hasattr(e, 'message') else (e.messages[0] if hasattr(e, 'messages') and e.messages else str(e))
+        return JsonResponse({'error': msg}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
