@@ -480,23 +480,37 @@ def admin_edit_video(request, video_id):
 
         slot_title = data.get('slot_title')
         slot_description = data.get('slot_description')
+        category_id_input = data.get('category_id')
         target_area = data.get('target_area')
         is_active_input = data.get('is_active')
         video_url_custom = data.get('video_url_custom')
         thumb_url_custom = data.get('thumbnail_url_custom')
 
+        if category_id_input:
+            try:
+                cat_obj = Category.objects.get(id=category_id_input)
+                video.slot.category = cat_obj
+            except Category.DoesNotExist:
+                pass
+
         if slot_title:
             video.slot.title = slot_title
-            if slot_description is not None:
-                video.slot.description = slot_description
-            video.slot.save()
+
+        if slot_description is not None:
+            video.slot.description = slot_description
+
+        video.slot.save()
 
         if 'video_file' in files:
             video.video_url = save_uploaded_file(files['video_file'], 'video')
         elif video_url_custom:
             video.video_url = video_url_custom
 
-        if 'thumbnail_file' in files:
+        remove_thumbnail = data.get('remove_thumbnail')
+
+        if remove_thumbnail in ('1', 'true', True):
+            video.thumbnail_url = ''
+        elif 'thumbnail_file' in files:
             video.thumbnail_url = save_uploaded_file(files['thumbnail_file'], 'thumbnail')
         elif thumb_url_custom is not None:
             video.thumbnail_url = thumb_url_custom
@@ -625,8 +639,8 @@ def admin_analytics_summary(request):
 
         cat_qs = Category.objects.annotate(
             views=Count('slots__videos__view_events', filter=Q(slots__videos__view_events__source='patient') | Q(slots__videos__view_events__source__isnull=True)),
-            video_count=Count('slots__videos', distinct=True)
-        ).order_by('-views')
+            video_count=Count('slots__videos', filter=Q(slots__is_intro=False), distinct=True)
+        ).filter(video_count__gt=0).order_by('-views')
 
         category_stats = [{
             'category_title': c.title,

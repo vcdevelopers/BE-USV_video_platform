@@ -51,6 +51,18 @@ def run_tests():
 
     headers = {'Authorization': f'Bearer {token}'}
 
+    # Test Edit Disclaimer & Site Settings via Admin API
+    original_disclaimer = "DISCLAIMER: The exercise guides and wellness recommendations presented in the USV Exercise Portal are designed for practical lifestyle education and patient wellness by USV. They do not substitute professional medical diagnosis, treatment, or clinical advice. Always consult your healthcare provider before undertaking any new physical activity routine."
+    test_disclaimer = "TEST DISCLAIMER: Medical advice disclaimer updated by admin."
+    res_update_settings = requests.post(f"{BASE_URL}/admin/site-settings", json={'disclaimer': test_disclaimer}, headers=headers)
+    assert res_update_settings.status_code == 200, f"Updating site settings failed: {res_update_settings.status_code}"
+    # Verify public settings reflects updated disclaimer
+    res_public_settings = requests.get(f"{BASE_URL}/site-settings")
+    assert res_public_settings.json()['settings']['disclaimer'] == test_disclaimer, "Disclaimer update mismatch"
+    # Restore original disclaimer
+    requests.post(f"{BASE_URL}/admin/site-settings", json={'disclaimer': original_disclaimer}, headers=headers)
+    print("  [OK] POST /api/admin/site-settings PASSED: Medical disclaimer updated & verified via public API")
+
     # 3. Test Source Trust Boundary on View Events
     print("\n[TEST 3] Source Trust Boundary on View Events...")
     # Spoof source='admin' without auth -> MUST land as 'patient'
@@ -118,6 +130,11 @@ def run_tests():
 
     # Toggle back to active
     requests.put(f"{BASE_URL}/admin/videos/{vid1_id}/toggle", headers=headers)
+
+    # Test Remove Thumbnail
+    res_rem_thumb = requests.put(f"{BASE_URL}/admin/videos/{vid1_id}", data={'remove_thumbnail': '1'}, headers=headers)
+    assert res_rem_thumb.status_code == 200, f"Remove thumbnail failed: {res_rem_thumb.status_code}"
+    print("  [OK] REMOVE THUMBNAIL PASSED: Custom thumbnail cleared successfully")
 
     # 6. Test Analytics & Excel Export
     print("\n[TEST 6] Admin Analytics Summary & Excel Export...")
